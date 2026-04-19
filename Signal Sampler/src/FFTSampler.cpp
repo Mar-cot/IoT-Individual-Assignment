@@ -2,84 +2,87 @@
 #include <Arduino.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
-#include "esp_dsp.h" // Espressif's official hardware-accelerated DSP library
+#include "esp_dsp.h" 
 
-#define I2S_SAMPLE_RATE 100000
 #define DECIMATION_FACTOR 2
-#define FFT_SAMPLE_RATE (I2S_SAMPLE_RATE/DECIMATION_FACTOR) // ~50000 Hz
 #define SAMPLES 4096
 #define BUFFER_LEN 64
+#define MAX_FFT_RUNS 50 // The number of calibration runs
 
-// FreeRTOS Handles
-QueueHandle_t sampleQueue;
+uint32_t current_i2s_rate = 100000; 
+float current_fft_rate = (float)current_i2s_rate / DECIMATION_FACTOR; 
+
+QueueHandle_t fftsampleQueue;
 TaskHandle_t Task1Handle;
 TaskHandle_t FFTTaskHandle;
 
-// ESP-DSP Arrays
-// It uses an interleaved format: [Real0, Imag0, Real1, Imag1...]
-// So for 2048 samples, the array size is 4096.
-float fft_data[SAMPLES * 2]; 
-float window_coefficients[SAMPLES];
+// 1. DYNAMIC POINTERS: These replace the static arrays so we can free them later.
+float *fft_data; 
+float *window_coefficients;
 
-// ---------------------------------------------------------
-// TASK 1: Read I2S (Pinned to Core 0)
-// ---------------------------------------------------------
+// 2. STATE FLAG: Tells the I2S reader when to stop feeding the FFT.
+volatile bool calibration_done = false;
+
+// --- I2S READ TASK ---
 void i2sReadTask(void *pvParameters) {
   uint16_t buffer[BUFFER_LEN];
   size_t bytes_read;
 
   for (;;) {
     i2s_read(I2S_NUM_0, buffer, sizeof(buffer), &bytes_read, portMAX_DELAY);
-    xQueueOverwrite(sampleQueue, buffer);
+    
+    if (!calibration_done) {
+      // We are in calibration mode, feed the FFT task
+      xQueueOverwrite(fftsampleQueue, buffer);
+    } else {
+      // ------------------------------------------------------------------
+      // CALIBRATION IS OVER, THE HARDWARE IS OPTIMIZED.
+      // This is where your final application goes! 
+      // (e.g., save the buffer to an SD Card, send it over WiFi, etc.)
+      // ------------------------------------------------------------------
+      
+      // Example: just to prove it's still running at the new optimized speed
+      // Serial.println(buffer[0]); 
+    }
   }
 }
 
-// ---------------------------------------------------------
-// TASK 2: Compute FFT (Pinned to Core 1)
-// ---------------------------------------------------------
+// --- FFT TASK ---
 void fftTask(void *pvParameters) {
   uint16_t rx_buffer[BUFFER_LEN];
   int sample_index = 0;
-  int indicesToKeep[BUFFER_LEN/DECIMATION_FACTOR];
+  
+  // Variables for the 50-run calibration
+  int fft_run_count = 0;
+  int recorded_peaks[MAX_FFT_RUNS]; 
 
+  int indicesToKeep[BUFFER_LEN/DECIMATION_FACTOR];
   for(int i = 0; i < BUFFER_LEN/DECIMATION_FACTOR; i++){
     indicesToKeep[i] = i * DECIMATION_FACTOR;
-    Serial.println(indicesToKeep[i]);
   }
 
   for (;;) {
-    if (xQueueReceive(sampleQueue, rx_buffer, portMAX_DELAY) == pdPASS) {
-      
-      // Decimation: Keep 2 evenly spaced samples out of 64
+    if (xQueueReceive(fftsampleQueue, rx_buffer, portMAX_DELAY) == pdPASS) {
       
       for (int i = 0; i < BUFFER_LEN/DECIMATION_FACTOR; i++) {
         if (sample_index < SAMPLES) {
           int buffer_idx = indicesToKeep[i];
-          
-          // ESP-DSP Interleaved Format
-          // Even index = Real Part, Odd index = Imaginary Part
           fft_data[sample_index * 2] = (float)(rx_buffer[buffer_idx] & 0xFFF) - 2048.0; 
-          fft_data[sample_index * 2 + 1] = 0.0; // Imaginary is 0
-          
+          fft_data[sample_index * 2 + 1] = 0.0; 
           sample_index++;
         }
       }
 
-      // Once we have enough samples, run the hardware-accelerated FFT
       if (sample_index >= SAMPLES) {
         
-        // 1. Apply Window (Multiply the real parts by the pre-calculated window)
         for (int i = 0; i < SAMPLES; i++) {
           fft_data[i * 2] *= window_coefficients[i];
         }
 
-        // 2. Compute FFT (Extremely fast, uses ESP32 FPU hardware)
         dsps_fft2r_fc32(fft_data, SAMPLES);
-
-        // 3. Bit-reverse the array (A required step in the ESP-DSP algorithm)
         dsps_bit_rev_fc32(fft_data, SAMPLES);
 
-        // 4. Calculate magnitudes and find the absolute maximum peak
+        // --- REVERSE ALGORITHM ---
         float max_magnitude = 0;
         
         // Skip DC offset (i = 0) to prevent false positives
@@ -114,34 +117,96 @@ void fftTask(void *pvParameters) {
           }
         }
 
-        // 7. Convert the index back into a Frequency (Hz)
-        float highestFrequency = (float)highest_freq_index * (FFT_SAMPLE_RATE / (float)SAMPLES);
-        
-        Serial.print("Highest Active Frequency (Reverse Search): ");
-        Serial.print(highestFrequency);
+        // Store the raw index instead of the floating point frequency.
+        // It is much easier and safer to find the "mode" of integers!
+        recorded_peaks[fft_run_count] = highest_freq_index;
+        float f_found = (float)highest_freq_index * (current_fft_rate / (float)SAMPLES);
+        fft_run_count++;
+
+        Serial.print("Calibration Run ");
+        Serial.print(fft_run_count);
+        Serial.print("/");
+        Serial.print(MAX_FFT_RUNS);
+        Serial.print("\tPeak: ");
+        Serial.print(f_found);
         Serial.println(" Hz");
 
-        sample_index = 0;
+
+        // --- CALIBRATION COMPLETE LOGIC ---
+        if (fft_run_count >= MAX_FFT_RUNS) {
+          
+          // 1. Find the Mode (The most frequent highest index)
+          int mode_index = 0;
+          int max_occurrences = 0;
+
+          for (int i = 0; i < MAX_FFT_RUNS; i++) {
+            int count = 0;
+            for (int j = 0; j < MAX_FFT_RUNS; j++) {
+              if (recorded_peaks[j] == recorded_peaks[i]) count++;
+            }
+            if (count > max_occurrences) {
+              max_occurrences = count;
+              mode_index = recorded_peaks[i];
+            }
+          }
+
+          // 2. Convert the winning index to the actual frequency
+          float f_max = (float)mode_index * (current_fft_rate / (float)SAMPLES);
+          
+          Serial.println("\n====================================");
+          Serial.print("CALIBRATION FINISHED. F_MAX: ");
+          Serial.print(f_max);
+          Serial.println(" Hz");
+
+          // 3. Set the sample rate to 2.2 * f_max
+          float target_fft_rate = f_max * 2.25f; 
+          
+          // Apply safety bounds
+          if (target_fft_rate < 4000.0f) target_fft_rate = 4000.0f; 
+          if (target_fft_rate > 100000.0f) target_fft_rate = 100000.0f;
+          
+          uint32_t target_i2s_rate = (uint32_t)(target_fft_rate);
+          
+          i2s_set_sample_rates(I2S_NUM_0, target_i2s_rate);
+          
+          Serial.print("NEW HARDWARE SAMPLE RATE APPLIED: ");
+          Serial.print(target_i2s_rate);
+          Serial.println(" Hz");
+          Serial.println("====================================\n");
+
+          // 4. Trigger the State Change
+          calibration_done = true;
+
+          // 5. ERASE MEMORY AND COMMIT SUICIDE (Delete the Task)
+          free(fft_data);
+          free(window_coefficients);
+          vQueueDelete(fftsampleQueue); // Erase the FreeRTOS queue
+          
+          Serial.println("Memory Freed. FFT Task Terminated. Moving to Sampler Run Phase.");
+          vTaskDelete(NULL); // Deletes THIS task safely
+        }
+
+        sample_index = 0; 
       }
     }
   }
 }
 
-// ---------------------------------------------------------
-// SETUP
-// ---------------------------------------------------------
+// --- SETUP ---
 void setup() {
   Serial.begin(115200);
 
-  // Initialize ESP-DSP for a maximum FFT size of 4096
+  // ALLOCATE MEMORY DYNAMICALLY ON THE HEAP
+  // This takes up ~49 KB of RAM, but we get it all back later!
+  fft_data = (float*) malloc(SAMPLES * 2 * sizeof(float));
+  window_coefficients = (float*) malloc(SAMPLES * sizeof(float));
+
   dsps_fft2r_init_fc32(NULL, 4096);
-  
-  // Generate Hann window coefficients once to save CPU time later
   dsps_wind_hann_f32(window_coefficients, SAMPLES);
 
   i2s_config_t i2s_config = {
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_ADC_BUILT_IN),
-    .sample_rate = (uint32_t)I2S_SAMPLE_RATE,
+    .sample_rate = current_i2s_rate, 
     .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
     .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,       
     .communication_format = I2S_COMM_FORMAT_STAND_I2S, 
@@ -156,7 +221,7 @@ void setup() {
   i2s_set_adc_mode(ADC_UNIT_1, ADC1_CHANNEL_6);
   i2s_adc_enable(I2S_NUM_0);
 
-  sampleQueue = xQueueCreate(1, sizeof(uint16_t) * 64);
+  fftsampleQueue = xQueueCreate(1, sizeof(uint16_t) * 64);
 
   xTaskCreatePinnedToCore(i2sReadTask, "I2S_Read", 4096, NULL, 2, &Task1Handle, 0);
   xTaskCreatePinnedToCore(fftTask, "FFT_Process", 8192, NULL, 3, &FFTTaskHandle, 1);
