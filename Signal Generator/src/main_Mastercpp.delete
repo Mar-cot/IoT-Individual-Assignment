@@ -1,0 +1,52 @@
+#include "driver/i2s.h"
+#include <math.h>
+#include <Arduino.h>
+
+#define SAMPLE_RATE     44100
+#define SINE_FREQ       20.0
+#define I2S_NUM         I2S_NUM_0
+
+// Define the digital output pins
+#define I2S_BCLK_PIN    22
+#define I2S_LRCK_PIN    23
+#define I2S_DOUT_PIN    19
+
+void setup() {
+  i2s_config_t i2s_config = {
+    // Removed the DAC_BUILT_IN flag. It is now a pure digital MASTER.
+    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
+    .sample_rate = SAMPLE_RATE,
+    .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
+    .channel_format = I2S_CHANNEL_FMT_ONLY_RIGHT,
+    .communication_format = I2S_COMM_FORMAT_STAND_I2S,
+    .intr_alloc_flags = 0,
+    .dma_buf_count = 8,
+    .dma_buf_len = 64,
+    .use_apll = false
+  };
+
+  i2s_pin_config_t pin_config = {
+      .bck_io_num = I2S_BCLK_PIN,
+      .ws_io_num = I2S_LRCK_PIN,
+      .data_out_num = I2S_DOUT_PIN,
+      .data_in_num = I2S_PIN_NO_CHANGE
+  };
+
+  i2s_driver_install(I2S_NUM, &i2s_config, 0, NULL);
+  i2s_set_pin(I2S_NUM, &pin_config); // Replaced the dac_mode function
+}
+
+void loop() {
+  static float phase = 0;
+  uint16_t sample;
+  size_t bytes_written;
+
+  float val = sin(phase);
+  // Scale -1.0..1.0 to 0..65535 for a full 16-bit digital wave
+  sample = (uint16_t)((val + 1.0) * 32767.0); 
+
+  i2s_write(I2S_NUM, &sample, sizeof(sample), &bytes_written, portMAX_DELAY);
+
+  phase += 2 * PI * SINE_FREQ / SAMPLE_RATE;
+  if (phase >= 2 * PI) phase -= 2 * PI;
+}
