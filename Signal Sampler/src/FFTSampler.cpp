@@ -79,32 +79,49 @@ void fftTask(void *pvParameters) {
         // 3. Bit-reverse the array (A required step in the ESP-DSP algorithm)
         dsps_bit_rev_fc32(fft_data, SAMPLES);
 
-        // 4. Find the major peak manually (ESP-DSP leaves the array as complex numbers)
+        // 4. Calculate magnitudes and find the absolute maximum peak
         float max_magnitude = 0;
-        int peak_index = 0;
-
-        // We only scan the first half of the array (up to the Nyquist limit)
-        for (int i = 0; i < SAMPLES / 2; i++) {
+        
+        // Skip DC offset (i = 0) to prevent false positives
+        for (int i = 1; i < SAMPLES / 2; i++) {
           float real = fft_data[i * 2];
           float imag = fft_data[i * 2 + 1];
           
-          // Magnitude = sqrt(real^2 + imag^2)
+          // Calculate Linear Magnitude (not Energy)
           float magnitude = sqrt((real * real) + (imag * imag));
-
+          
+          // RAM OPTIMIZATION: Store magnitude back into the array
+          fft_data[i] = magnitude; 
+          
+          // Keep track of the absolute loudest frequency to establish our noise floor
           if (magnitude > max_magnitude) {
             max_magnitude = magnitude;
-            peak_index = i;
           }
         }
 
-        // 5. Convert the peak index back into a Frequency (Hz)
-        float majorPeak = (float)peak_index * (FFT_SAMPLE_RATE / (float)SAMPLES);
+        // 5. Set the "First Strike" Threshold
+        // We consider any signal that is at least 5% the volume of the loudest peak to be "Active"
+        float noise_threshold = max_magnitude * 0.05f; 
+        int highest_freq_index = 0;
+
+        // 6. Top-Down Reverse Search
+        // Start from the absolute highest frequency (Nyquist limit) and scan backwards
+        for (int i = (SAMPLES / 2) - 1; i >= 1; i--) {
+          
+          if (fft_data[i] >= noise_threshold) {
+            highest_freq_index = i;
+            break; // We hit a real signal! Stop searching immediately.
+          }
+        }
+
+        // 7. Convert the index back into a Frequency (Hz)
+        float highestFrequency = (float)highest_freq_index * (FFT_SAMPLE_RATE / (float)SAMPLES);
         
-        Serial.print("Dominant Frequency: ");
-        Serial.print(majorPeak);
+        Serial.print("Highest Active Frequency (Reverse Search): ");
+        Serial.print(highestFrequency);
         Serial.println(" Hz");
 
-        sample_index = 0; 
+        sample_index = 0;
       }
     }
   }

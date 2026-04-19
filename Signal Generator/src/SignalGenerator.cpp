@@ -17,9 +17,9 @@ struct Sinusoid {
 
 // 2. Create your mix
 Sinusoid active_signals[] = {
-  {1.0,  25000.0, 0.0, {}}, // The 2000 Hz you were trying to generate
+  {1.0,  10000.0, 0.0, {}},
   {3.0,  4000.0, 0.0, {}}, 
-  {0.25, 16000.0, 0.0, {}}  
+  {0.05, 16000.0, 0.0, {}}  
 };
 
 const int NUM_SIGNALS = sizeof(active_signals) / sizeof(active_signals[0]);
