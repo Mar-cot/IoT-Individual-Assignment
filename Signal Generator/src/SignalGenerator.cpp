@@ -15,9 +15,15 @@ struct Sinusoid {
   float precalculated_wave[WAVETABLE_SIZE]; // Dedicated array for this wave
 };
 
-// 2. Create your mix
+// 2. Create your mix (Max 6 signals because of DRAM limitations)
 Sinusoid active_signals[] = {
-  {1.0,  20.0, 0.0, {}},  
+  {1.0, 2000.0, 0.0, {}},
+  // {1.0, 5000.0, 0.0, {}},
+  {0.3, 9700.0, 0.0, {}},  
+  {1.0, 200.0, 0.0, {}},
+  {1.0, 100.0, 0.0, {}},
+  {1.0, 20.0, 0.0, {}},
+  {1.0, 10.0, 0.0, {}},
 };
 
 const int NUM_SIGNALS = sizeof(active_signals) / sizeof(active_signals[0]);
