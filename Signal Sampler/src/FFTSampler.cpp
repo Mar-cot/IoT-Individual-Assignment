@@ -5,7 +5,8 @@
 #include "esp_dsp.h" 
 #include "secrets.h"
 #include <WiFi.h>             
-#include <ThingsBoard.h> 
+#include <ThingsBoard.h>
+#include <Arduino_MQTT_Client.h>
 
 #define DECIMATION_FACTOR 2
 #define SAMPLES 4096
@@ -32,8 +33,10 @@ volatile bool calibration_done = false;
 
 // --- THINGSBOARD GLOBALS ---
 WiFiClient espClient;
-ThingsBoard tb(espClient);
-
+// Wrap the raw WiFi client in the ThingsBoard MQTT interface
+Arduino_MQTT_Client mqttClient(espClient); 
+// Pass the MQTT client wrapper to ThingsBoard
+ThingsBoard tb(mqttClient);
 void connectToNetwork() {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.print("Connecting to WiFi...");
@@ -226,9 +229,9 @@ void aggregateConsumerTask(void *pvParameters) {
     if (xQueueReceive(aggregateQueue, &final_average, pdMS_TO_TICKS(100)) == pdPASS) {
       
       // The ThingsBoard library handles JSON serialization automatically
-      tb.sendTelemetryData("average_hz", final_average);
+      tb.sendTelemetryData("average_value", final_average);
 
-      Serial.print(">>> [THINGSBOARD PUBLISHED] average_hz: ");
+      Serial.print(">>> [THINGSBOARD PUBLISHED] average_value: ");
       Serial.println(final_average);
     }
   }
