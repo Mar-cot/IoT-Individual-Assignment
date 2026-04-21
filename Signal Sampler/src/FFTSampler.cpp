@@ -7,6 +7,7 @@
 #include <WiFi.h>             
 #include <ThingsBoard.h>
 #include <Arduino_MQTT_Client.h>
+#include "esp32/clk.h"
 
 #define DECIMATION_FACTOR 2
 #define SAMPLES 4096
@@ -215,6 +216,44 @@ void processingTask(void *pvParameters) {
   }
 }
 
+#include "esp_sleep.h"
+#include "esp_timer.h" 
+
+void LightSleepMeasuringTask(void *pvParameters) {
+  // First wait: 20 seconds to let Wi-Fi, MQTT, and the first FFT calibrations settle
+  vTaskDelay(pdMS_TO_TICKS(20000)); 
+
+  for(;;) {
+    // Wait 10 seconds between sleep tests
+    vTaskDelay(pdMS_TO_TICKS(10000)); 
+
+    Serial.println("\n>>> Entering Minimum Light Sleep...");
+
+    // 1. Set the wakeup timer to the absolute minimum: 1 microsecond
+    esp_sleep_enable_timer_wakeup(1);
+
+    // 2. Grab the high-resolution hardware timestamp right before sleep
+    int64_t time_before = esp_timer_get_time();
+
+    // 3. Trigger Light Sleep
+    // The CPU halts execution exactly on this line. RAM is preserved.
+    esp_light_sleep_start();
+
+    // 4. The CPU wakes up and resumes execution exactly on the next line!
+    int64_t time_after = esp_timer_get_time();
+
+    // 5. Calculate the true hardware overhead
+    int64_t delta_us = time_after - time_before;
+    float delta_ms = (float)delta_us / 1000.0f;
+
+    Serial.print(">>> Woke up! Real elapsed time: ");
+    Serial.print(delta_us);
+    Serial.print(" us (");
+    Serial.print(delta_ms);
+    Serial.println(" ms)");
+  }
+}
+
 void aggregateConsumerTask(void *pvParameters) {
   float final_average;
 
@@ -271,6 +310,7 @@ void setup() {
   xTaskCreatePinnedToCore(fftTask, "FFT_Process", 8192, NULL, 3, &FFTTaskHandle, 1);
   xTaskCreatePinnedToCore(processingTask, "Data_Processing", 4096, NULL, 3, &ProcessingTaskHandle, 1);
   xTaskCreatePinnedToCore(aggregateConsumerTask, "TB_Consumer", 4096, NULL, 2, &ConsumerTaskHandle, 1);
+  xTaskCreatePinnedToCore(LightSleepMeasuringTask, "Sleep_Test", 2048, NULL, 1, NULL, 0);
 }
 
 void loop() {
