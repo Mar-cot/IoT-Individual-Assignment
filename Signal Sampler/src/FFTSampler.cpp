@@ -9,13 +9,16 @@
 #include <WiFi.h>             
 #include <ThingsBoard.h>
 #include <Arduino_MQTT_Client.h>
-#include "esp_timer.h" // NEW: For microsecond-accurate timing
+#include "esp_timer.h" 
+#include "esp_sleep.h"
+#include "soc/rtc_wdt.h"
+#include "esp_wifi.h"
 
 #define DECIMATION_FACTOR 2
 #define SAMPLES 4096
 #define BUFFER_LEN 64
 #define MAX_FFT_RUNS 15 
-#define AGGREGATE_WINDOW_SECONDS 3 
+#define AGGREGATE_WINDOW_SECONDS 5 
 
 uint32_t current_sample_rate = 100000; 
 float current_fft_rate = (float)current_sample_rate / DECIMATION_FACTOR;
@@ -36,33 +39,53 @@ float *window_coefficients;
 
 volatile bool calibration_done = false;
 volatile bool hardware_rebuilding = false;
-int calibration_stage = 0; 
+int calibration_stage = 0;
+uint32_t sleep_count = 0;
+
+// THE INTERLOCK: Prevents hardware sleep while Wi-Fi is booting/transmitting
+volatile bool critical_task_running = false; 
 
 // --- THINGSBOARD GLOBALS ---
 WiFiClient espClient;
 Arduino_MQTT_Client mqttClient(espClient); 
 ThingsBoard tb(mqttClient);
 
-void connectToNetwork() {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.print("Connecting to WiFi...");
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    while (WiFi.status() != WL_CONNECTED) {
-      vTaskDelay(pdMS_TO_TICKS(500));
-      Serial.print(".");
-    }
-    Serial.println("\nWiFi Connected.");
+// ---------------------------------------------------------
+// DYNAMIC NETWORK CONTROLLERS
+// ---------------------------------------------------------
+void connectNetwork() {
+  critical_task_running = true; // Lock out hardware sleep
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  
+  Serial.print("\nRadio ON. Connecting to WiFi...");
+  while (WiFi.status() != WL_CONNECTED) {
+    vTaskDelay(pdMS_TO_TICKS(200));
+    Serial.print(".");
   }
 
+  Serial.print(" Connecting to ThingsBoard...");
   while (!tb.connected()) {
-    Serial.print("Connecting to ThingsBoard node...");
     if (tb.connect(THINGSBOARD_SERVER, DEVICE_TOKEN)) {
-      Serial.println("\nThingsBoard Connected.");
+      Serial.println(" Connected!");
     } else {
-      Serial.print("\nFailed to connect. Retrying in 5 seconds...");
-      vTaskDelay(pdMS_TO_TICKS(5000));
+      vTaskDelay(pdMS_TO_TICKS(1000));
     }
   }
+}
+
+void disconnectNetwork() {
+  // Give MQTT a fraction of a second to ensure the packet leaves the antenna
+  vTaskDelay(pdMS_TO_TICKS(100)); 
+  
+  tb.disconnect();
+  WiFi.disconnect(true, true);
+  WiFi.mode(WIFI_OFF); // Physically cuts power to the RF synthesizer
+  
+  Serial.println("Radio OFF. Resuming Light Sleep Architecture.");
+  
+  critical_task_running = false; // Allow hardware sleep again
 }
 
 // ---------------------------------------------------------
@@ -82,6 +105,7 @@ void i2sReadTask(void *pvParameters) {
     if(bytes_read == 0) continue;
     
     if (!calibration_done) {
+      // Reverted to Overwrite
       xQueueOverwrite(fftsampleQueue, buffer);
     } else {
       xQueueSend(processingQueue, buffer, portMAX_DELAY);
@@ -95,19 +119,29 @@ void i2sReadTask(void *pvParameters) {
 void analogReadTask(void *pvParameters) {
   uint16_t buffer[BUFFER_LEN];
   int buffer_idx = 0;
-  int buffers_sent = 0; // Tracks buffers for the Run Phase watchdog feeder
 
   adc1_config_width(ADC_WIDTH_BIT_12);
-  adc1_config_channel_atten(ADC1_CHANNEL_6, ADC_ATTEN_DB_11);
+  adc1_config_channel_atten(ADC1_CHANNEL_6, ADC_ATTEN_DB_12);
 
   int64_t next_sample_time = esp_timer_get_time();
 
   for (;;) {
     int64_t sample_interval_us = 1000000 / current_sample_rate;
     int64_t now = esp_timer_get_time();
+    int64_t time_to_wait_us = next_sample_time - now;
 
-    if (next_sample_time - now > 2000) {
-      vTaskDelay(pdMS_TO_TICKS((next_sample_time - now) / 1000) - 1);
+    // --- HARDWARE SLEEP INTERLOCK LOGIC ---
+    if (calibration_done && time_to_wait_us > 1000) {
+      if (!critical_task_running) {
+        esp_sleep_enable_timer_wakeup(time_to_wait_us - 400);
+        sleep_count++;
+        esp_light_sleep_start();
+      } 
+      else if (time_to_wait_us > 2000) {
+        vTaskDelay(pdMS_TO_TICKS(time_to_wait_us / 1000) - 1);
+      }
+    } else if (time_to_wait_us > 2000) {
+      vTaskDelay(pdMS_TO_TICKS(time_to_wait_us / 1000) - 1);
     }
 
     while (esp_timer_get_time() < next_sample_time) {
@@ -122,30 +156,10 @@ void analogReadTask(void *pvParameters) {
       buffer_idx = 0;
       
       if (!calibration_done) {
-        // --- CALIBRATION PHASE ---
-        // Try to push to the queue. Because depth is 2, this ONLY fails 
-        // when the FFT Task is busy doing the massive math calculation.
-        if (xQueueSend(fftsampleQueue, buffer, 0) != pdPASS) {
-          
-          // The FFT task is crunching numbers. We don't need to sample right now.
-          // Sleep for 5ms to let Core 0 breathe and feed the Watchdog Timer!
-          vTaskDelay(pdMS_TO_TICKS(5)); 
-          
-          // Reset the hardware timer so the next block of samples has perfect internal timing
-          // next_sample_time = esp_timer_get_time(); 
-        }
+        // Reverted to Overwrite
+        xQueueOverwrite(fftsampleQueue, buffer);
       } else {
-        // --- RUN PHASE ---
         xQueueSend(processingQueue, buffer, portMAX_DELAY);
-        
-        // During the continuous 10-second Run Phase, we must manually feed the WDT.
-        // We let the CPU breathe for 1ms every 50 buffers (approx every 0.6 seconds).
-        buffers_sent++;
-        if (buffers_sent >= 50) {
-          vTaskDelay(pdMS_TO_TICKS(1)); // Feed WDT
-          // next_sample_time = esp_timer_get_time(); // Reset timer to prevent a catch-up burst
-          buffers_sent = 0;
-        }
       }
     }
   }
@@ -237,14 +251,10 @@ void fftTask(void *pvParameters) {
           Serial.print(" FINISHED. F_MAX: ");
           Serial.print(f_max); Serial.println(" Hz");
 
-          // ----------------------------------------------------
-          // STAGE 0: HIGH-SPEED ROUTER
-          // ----------------------------------------------------
           if (calibration_stage == 0) {
-            float target_fft_rate = f_max * 2.25f;
+            float target_fft_rate = f_max * 2.1f;
             
             if (target_fft_rate >= 4000.0f) {
-              // --- PATH A: STAY ON I2S HARDWARE ---
               if (target_fft_rate > 62500.0f) target_fft_rate = 62500.0f;
               
               current_sample_rate = (uint32_t)(target_fft_rate * DECIMATION_FACTOR); 
@@ -284,7 +294,6 @@ void fftTask(void *pvParameters) {
               vTaskDelete(NULL); 
               
             } else {
-              // --- PATH B: SHIFT TO ANALOG SOFTWARE ---
               Serial.println(">>> Target < 4000Hz! Tearing down I2S and switching to precision AnalogRead...");
               calibration_stage = 1;
               
@@ -295,8 +304,7 @@ void fftTask(void *pvParameters) {
               i2s_stop(I2S_NUM_0);
               i2s_driver_uninstall(I2S_NUM_0);
               
-              // Start the precision sweep at exactly 10000 Hz using analogRead (10kHz/DECIMATION_FACTOR/2 = 2.5kHz, so we cover all possible frequencies that brought us here).
-              current_sample_rate = 10000;
+              current_sample_rate = 5000;
               current_fft_rate = (float)current_sample_rate / DECIMATION_FACTOR;
               
               fft_run_count = 0;
@@ -306,16 +314,13 @@ void fftTask(void *pvParameters) {
               xTaskCreatePinnedToCore(analogReadTask, "Analog_Read", 4096, NULL, 2, &AnalogReadTaskHandle, 0);
             }
           } 
-          // ----------------------------------------------------
-          // STAGE 1: ANALOG PRECISION COMPLETED
-          // ----------------------------------------------------
           else if (calibration_stage == 1) {
-            float target_fft_rate = f_max * 2.25f;
+            float target_fft_rate = f_max * 2.1f;
             
             if (target_fft_rate < 20.0f) target_fft_rate = 20.0f; 
-            if (target_fft_rate > 5000.0f) target_fft_rate = 5000.0f; // Cap at the software max
+            if (target_fft_rate > 5000.0f) target_fft_rate = 5000.0f; 
             
-            current_sample_rate = (uint32_t)(target_fft_rate * DECIMATION_FACTOR); 
+            current_sample_rate = (uint32_t)(target_fft_rate); 
             
             Serial.print("NEW ANALOG SOFTWARE RATE APPLIED: ");
             Serial.print(current_sample_rate); Serial.println(" Hz");
@@ -370,30 +375,34 @@ void aggregateConsumerTask(void *pvParameters) {
   float final_average;
   unsigned long last_publish_time = millis(); 
 
-  for (;;) {
-    if (!tb.connected()) {
-      connectToNetwork();
-    }
-    
-    tb.loop();
+  // Make sure radio is completely off to start
+  WiFi.mode(WIFI_OFF); 
 
-    if (xQueueReceive(aggregateQueue, &final_average, pdMS_TO_TICKS(100)) == pdPASS) {
+  for (;;) {
+    if (xQueueReceive(aggregateQueue, &final_average, portMAX_DELAY) == pdPASS) {
       unsigned long current_time = millis();
       unsigned long delta_time = current_time - last_publish_time;
-      last_publish_time = current_time; 
+
+      connectNetwork(); 
 
       tb.sendTelemetryData("average_value", final_average);
+      tb.loop();
 
       Serial.print(">>> [THINGSBOARD PUBLISHED] average_value: ");
       Serial.print(final_average);
       Serial.print(" \t delta_time: ");
       Serial.print(delta_time);
-      Serial.println(" ms");
+      Serial.print(" ms");
+      Serial.print("\t sleep_count: ");
+      Serial.println(sleep_count);
+      
+      sleep_count = 0;
+      last_publish_time = millis(); 
+
+      disconnectNetwork(); 
     }
   }
 }
-
-#include "soc/rtc_wdt.h"
 
 void setup() {
   Serial.begin(115200);
@@ -403,6 +412,14 @@ void setup() {
   disableCore0WDT(); 
   dsps_fft2r_init_fc32(NULL, 4096);
   dsps_wind_hann_f32(window_coefficients, SAMPLES);
+
+  wifi_config_t conf;
+  esp_wifi_get_config(WIFI_IF_STA, &conf);
+  conf.sta.listen_interval = 3; 
+  esp_wifi_set_config(WIFI_IF_STA, &conf);
+
+  esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+  esp_sleep_enable_wifi_wakeup();
 
   i2s_config_t i2s_config = {
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_ADC_BUILT_IN),
@@ -420,6 +437,7 @@ void setup() {
   i2s_set_pin(I2S_NUM_0, NULL);
   i2s_set_adc_mode(ADC_UNIT_1, ADC1_CHANNEL_6);
 
+  // REVERTED to size 1 
   fftsampleQueue = xQueueCreate(1, sizeof(uint16_t) * BUFFER_LEN);
   processingQueue = xQueueCreate(10, sizeof(uint16_t) * BUFFER_LEN);
   aggregateQueue = xQueueCreate(10, sizeof(float)); 
