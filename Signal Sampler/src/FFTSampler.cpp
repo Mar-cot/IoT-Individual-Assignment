@@ -17,7 +17,10 @@
 
 
 uint32_t current_i2s_rate = 100000; 
-float current_fft_rate = (float)current_i2s_rate / DECIMATION_FACTOR; 
+float current_fft_rate = (float)current_i2s_rate / DECIMATION_FACTOR;
+
+uint32_t aggregate_samples_needed;
+
 
 QueueHandle_t fftsampleQueue;
 QueueHandle_t processingQueue; 
@@ -38,6 +41,10 @@ WiFiClient espClient;
 Arduino_MQTT_Client mqttClient(espClient); 
 // Pass the MQTT client wrapper to ThingsBoard
 ThingsBoard tb(mqttClient);
+
+volatile bool hardware_rebuilding = false;
+
+
 void connectToNetwork() {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.print("Connecting to WiFi...");
@@ -60,12 +67,50 @@ void connectToNetwork() {
   }
 }
 
+#include "soc/i2s_reg.h"
+//ONLY WORKS IF .use_apll = false;
+/* float get_actual_hardware_sample_rate() {
+  // 1. Read the Clock Master (CLKM) configuration register
+  uint32_t clkm_conf = REG_READ(I2S_CLKM_CONF_REG(0));
+  
+  // Extract the integer and fractional dividers
+  uint32_t clkm_div_num = (clkm_conf >> I2S_CLKM_DIV_NUM_S) & I2S_CLKM_DIV_NUM_V;
+  uint32_t clkm_div_b   = (clkm_conf >> I2S_CLKM_DIV_B_S) & I2S_CLKM_DIV_B_V;
+  uint32_t clkm_div_a   = (clkm_conf >> I2S_CLKM_DIV_A_S) & I2S_CLKM_DIV_A_V;
+
+  // 2. Read the Bit Clock (BCLK) configuration register
+  uint32_t sample_conf = REG_READ(I2S_SAMPLE_RATE_CONF_REG(0));
+  uint32_t rx_bck_div_num = (sample_conf >> I2S_RX_BCK_DIV_NUM_S) & I2S_RX_BCK_DIV_NUM_V;
+
+  // Prevent divide by zero errors if the hardware isn't fully initialized yet
+  if (clkm_div_a == 0) clkm_div_a = 1; 
+  if (rx_bck_div_num == 0) rx_bck_div_num = 1; 
+
+  // 3. Reconstruct the exact fractional multiplier the silicon is using
+  float clkm_div = (float)clkm_div_num + ((float)clkm_div_b / (float)clkm_div_a);
+
+  // 4. Calculate the final sample rate
+  // Base clock for I2S (when use_apll = false) is the 160 MHz system PLL
+  // 32 is the I2S frame size (16 bits per channel * 2 channels)
+  float actual_rate = 160000000.0f / clkm_div / (float)rx_bck_div_num / 32.0f;
+
+  return actual_rate;
+}
+ */
+
 void i2sReadTask(void *pvParameters) {
   uint16_t buffer[BUFFER_LEN];
   size_t bytes_read;
 
   for (;;) {
-    i2s_read(I2S_NUM_0, buffer, sizeof(buffer), &bytes_read, portMAX_DELAY);
+
+    if (hardware_rebuilding) {
+      vTaskDelay(pdMS_TO_TICKS(10));
+      continue;
+    }
+
+    i2s_read(I2S_NUM_0, buffer, sizeof(buffer), &bytes_read, 500);
+    if(bytes_read == 0) continue;
     
     if (!calibration_done) {
       xQueueOverwrite(fftsampleQueue, buffer);
@@ -157,19 +202,67 @@ void fftTask(void *pvParameters) {
           Serial.print("CALIBRATION FINISHED. F_MAX: ");
           Serial.print(f_max); Serial.println(" Hz");
 
-          float target_fft_rate = f_max * 2.25f; 
-          if (target_fft_rate < 4000.0f) target_fft_rate = 4000.0f; 
-          if (target_fft_rate > 100000.0f) target_fft_rate = 100000.0f;
+          float target_fft_rate = f_max * 2.25f;
+          if (target_fft_rate < 725.0f) target_fft_rate = 725.0f; // Empirically proven that below 725Hz the clock bleeds, hard mathematical limit is ~653.59Hz 
+          if (target_fft_rate > 62500.0f) target_fft_rate = 62500.0f; // Due to how FFT is implemented, f_max <= 25kHz 
           
           current_i2s_rate = (uint32_t)(target_fft_rate); 
-          i2s_set_sample_rates(I2S_NUM_0, current_i2s_rate);
+
+          // --- 1. SIGNAL THE READER TASK TO PAUSE ---
+          hardware_rebuilding = true;
+          // Give Core 0 enough time to finish its current read cycle and pause
+          vTaskDelay(pdMS_TO_TICKS(600)); 
+
+          // --- 2. SAFELY REBUILD HARDWARE ---
+          i2s_stop(I2S_NUM_0);
+          i2s_driver_uninstall(I2S_NUM_0);
+
+          i2s_config_t i2s_config = {
+            .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_ADC_BUILT_IN),
+            .sample_rate = current_i2s_rate, 
+            .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
+            .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,       
+            .communication_format = I2S_COMM_FORMAT_STAND_I2S, 
+            .intr_alloc_flags = 0,
+            .dma_buf_count = 8,
+            .dma_buf_len = BUFFER_LEN,
+            .use_apll = true 
+          };
+
+          i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL);
+          i2s_set_pin(I2S_NUM_0, NULL);
+          i2s_set_adc_mode(ADC_UNIT_1, ADC1_CHANNEL_6);
+          // i2s_adc_enable(I2S_NUM_0);
+          
+          // --- 3. RESUME READING ---
+          hardware_rebuilding = false;
           
           Serial.print("NEW HARDWARE SAMPLE RATE APPLIED: ");
           Serial.print(current_i2s_rate); Serial.println(" Hz");
           Serial.println("====================================\n");
 
-          calibration_done = true;
+          aggregate_samples_needed = current_i2s_rate*AGGREGATE_WINDOW_SECONDS;
+          Serial.print("Number of samples to aggregate: ");
+          Serial.println(aggregate_samples_needed);
+          Serial.println("====================================\n");
 
+          vTaskDelay(pdMS_TO_TICKS(1000));
+
+          // ONLY WORKS IF .use_apll = false;
+          /* float real_hardware_rate = get_actual_hardware_sample_rate();
+          
+          Serial.println("\n--- CLOCK VERIFICATION ---");
+          Serial.print("Software Requested: ");
+          Serial.print(current_i2s_rate);
+          Serial.println(" Hz");
+          
+          Serial.print("Silicon Actual:     ");
+          Serial.print(real_hardware_rate*16);
+          Serial.println(" Hz");
+          Serial.println("--------------------------\n");
+ */
+          calibration_done = true;
+   
           free(fft_data);
           free(window_coefficients);
           vQueueDelete(fftsampleQueue); 
@@ -187,7 +280,7 @@ void processingTask(void *pvParameters) {
   uint16_t rx_buffer[BUFFER_LEN];
   uint64_t total_sum = 0; 
   uint32_t samples_passed = 0;
-
+  
   for (;;) {
     if (!calibration_done) {
       vTaskDelay(pdMS_TO_TICKS(100)); 
@@ -196,14 +289,13 @@ void processingTask(void *pvParameters) {
 
     if (xQueueReceive(processingQueue, rx_buffer, portMAX_DELAY) == pdPASS) {
       
-      uint32_t samples_needed = current_i2s_rate * AGGREGATE_WINDOW_SECONDS;
 
       for (int i = 0; i < BUFFER_LEN; i++) {
         
         total_sum += (rx_buffer[i] & 0xFFF); 
         samples_passed++;
 
-        if (samples_passed >= samples_needed) {
+        if (samples_passed >= aggregate_samples_needed) {
           
           float average = (float)total_sum / (float)samples_passed;
           xQueueSend(aggregateQueue, &average, portMAX_DELAY);
@@ -219,7 +311,7 @@ void processingTask(void *pvParameters) {
 #include "esp_sleep.h"
 #include "esp_timer.h" 
 
-void LightSleepMeasuringTask(void *pvParameters) {
+/* void LightSleepMeasuringTask(void *pvParameters) {
   // First wait: 20 seconds to let Wi-Fi, MQTT, and the first FFT calibrations settle
   vTaskDelay(pdMS_TO_TICKS(20000)); 
 
@@ -252,10 +344,13 @@ void LightSleepMeasuringTask(void *pvParameters) {
     Serial.print(delta_ms);
     Serial.println(" ms)");
   }
-}
+} */
 
 void aggregateConsumerTask(void *pvParameters) {
   float final_average;
+  
+  // Record the baseline time before entering the infinite loop
+  unsigned long last_publish_time = millis(); 
 
   for (;;) {
     if (!tb.connected()) {
@@ -267,11 +362,20 @@ void aggregateConsumerTask(void *pvParameters) {
     // 100ms timeout allows the task to breathe and hit tb.loop() to maintain connection
     if (xQueueReceive(aggregateQueue, &final_average, pdMS_TO_TICKS(100)) == pdPASS) {
       
+      // Calculate how much time has passed since the last successful receive/publish
+      unsigned long current_time = millis();
+      unsigned long delta_time = current_time - last_publish_time;
+      last_publish_time = current_time; // Update the baseline for the next run
+
       // The ThingsBoard library handles JSON serialization automatically
       tb.sendTelemetryData("average_value", final_average);
 
+      // Print the new formatted output with the delta time
       Serial.print(">>> [THINGSBOARD PUBLISHED] average_value: ");
-      Serial.println(final_average);
+      Serial.print(final_average);
+      Serial.print(" \t delta_time: ");
+      Serial.print(delta_time);
+      Serial.println(" ms");
     }
   }
 }
@@ -293,14 +397,14 @@ void setup() {
     .communication_format = I2S_COMM_FORMAT_STAND_I2S, 
     .intr_alloc_flags = 0,
     .dma_buf_count = 8,
-    .dma_buf_len = 64,
+    .dma_buf_len = BUFFER_LEN,
     .use_apll = true 
   };
 
   i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL);
   i2s_set_pin(I2S_NUM_0, NULL);
   i2s_set_adc_mode(ADC_UNIT_1, ADC1_CHANNEL_6);
-  i2s_adc_enable(I2S_NUM_0);
+  // i2s_adc_enable(I2S_NUM_0);
 
   fftsampleQueue = xQueueCreate(1, sizeof(uint16_t) * 64);
   processingQueue = xQueueCreate(1, sizeof(uint16_t) * 64);
@@ -310,7 +414,7 @@ void setup() {
   xTaskCreatePinnedToCore(fftTask, "FFT_Process", 8192, NULL, 3, &FFTTaskHandle, 1);
   xTaskCreatePinnedToCore(processingTask, "Data_Processing", 4096, NULL, 3, &ProcessingTaskHandle, 1);
   xTaskCreatePinnedToCore(aggregateConsumerTask, "TB_Consumer", 4096, NULL, 2, &ConsumerTaskHandle, 1);
-  xTaskCreatePinnedToCore(LightSleepMeasuringTask, "Sleep_Test", 2048, NULL, 1, NULL, 0);
+  // xTaskCreatePinnedToCore(LightSleepMeasuringTask, "Sleep_Test", 2048, NULL, 1, NULL, 0);
 }
 
 void loop() {
