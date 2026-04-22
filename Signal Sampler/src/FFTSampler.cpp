@@ -18,9 +18,9 @@
 #define SAMPLES 4096
 #define BUFFER_LEN 64
 #define MAX_FFT_RUNS 15 
-#define AGGREGATE_WINDOW_SECONDS 5 
+#define AGGREGATE_WINDOW_SECONDS 10 
 
-uint32_t current_sample_rate = 100000; 
+uint32_t current_sample_rate = 100000U; 
 float current_fft_rate = (float)current_sample_rate / DECIMATION_FACTOR;
 uint32_t aggregate_samples_needed;
 
@@ -434,12 +434,12 @@ void setup() {
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_ADC_BUILT_IN),
     .sample_rate = current_sample_rate, 
     .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
-    .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,       
+    .channel_format = I2S_CHANNEL_FMT_ONLY_RIGHT,       
     .communication_format = I2S_COMM_FORMAT_I2S_MSB, 
     .intr_alloc_flags = 0,
     .dma_buf_count = 8,
     .dma_buf_len = BUFFER_LEN,
-    .use_apll = true 
+    .use_apll = false 
   };
 
   i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL);
@@ -454,7 +454,7 @@ void setup() {
   xTaskCreatePinnedToCore(i2sReadTask, "I2S_Read", 4096, NULL, 2, &Task1Handle, 0);
   xTaskCreatePinnedToCore(fftTask, "FFT_Process", 8192, NULL, 3, &FFTTaskHandle, 1);
   xTaskCreatePinnedToCore(processingTask, "Data_Processing", 4096, NULL, 3, &ProcessingTaskHandle, 1);
-  xTaskCreatePinnedToCore(aggregateConsumerTask, "TB_Consumer", 4096, NULL, 2, &ConsumerTaskHandle, 1);
+  xTaskCreatePinnedToCore(aggregateConsumerTask, "TB_Consumer", 8192, NULL, 2, &ConsumerTaskHandle, 1);
 }
 
 void loop() {

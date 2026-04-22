@@ -79,21 +79,21 @@ void setup() {
     "I2S_Read_Task",  // Task name (for debugging)
     4096*4,             // Stack size (bytes)
     NULL,             // Parameters passed to task
-    2,                // Priority (higher number = higher priority)
+    2,                // Priority (higher number = Lower priority)
     &Task1Handle,     // Task handle
     0                 // Core ID (Core 0)
   );
 
-  // 3. Create Task 2 (Printing) on Core 1
-  xTaskCreatePinnedToCore(
-    serialPrintTask,    // Task function
-    "Serial_Print_Task",// Task name 
-    4096*4,               // Stack size
-    NULL,               // Parameters
-    1,                  // Priority (slightly lower than reading)
-    &Task2Handle,       // Task handle
-    1                   // Core ID (Core 1)
-  );
+  // // 3. Create Task 2 (Printing) on Core 1
+  // xTaskCreatePinnedToCore(
+  //   serialPrintTask,    // Task function
+  //   "Serial_Print_Task",// Task name 
+  //   4096*4,               // Stack size
+  //   NULL,               // Parameters
+  //   1,                  // Priority (slightly lower than reading)
+  //   &Task2Handle,       // Task handle
+  //   1                   // Core ID (Core 1)
+  // );
 }
 
 // ---------------------------------------------------------
