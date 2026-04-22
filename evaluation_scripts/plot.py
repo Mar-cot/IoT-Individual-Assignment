@@ -2,8 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # ====== CONFIG ======
-filename = "adaptive_on_no_serial_50Hz_10s_window.txt" 
-title_prefix = "Adaptive Sample Rate with 50Hz Signal and WiFi ON-OFF (every 10s)"
+filename = "adaptive_on_no_aggregation_50Hz_10s_window.txt" 
+title_prefix = "Adaptive Sample Rate with 50Hz Signal, no aggregation, and WiFi ON-OFF (every 10s)"
 
 # ====== LOAD DATA ======
 time_ms = []

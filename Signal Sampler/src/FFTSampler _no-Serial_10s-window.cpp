@@ -18,7 +18,7 @@
 #define SAMPLES 4096
 #define BUFFER_LEN 64
 #define MAX_FFT_RUNS 15 
-#define AGGREGATE_WINDOW_SECONDS 5 
+#define AGGREGATE_WINDOW_SECONDS 10 
 
 uint32_t current_sample_rate = 100000; 
 float current_fft_rate = (float)current_sample_rate / DECIMATION_FACTOR;
@@ -59,16 +59,16 @@ void connectNetwork() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   
-  Serial.print("\nRadio ON. Connecting to WiFi...");
+  // Serial.print("\nRadio ON. Connecting to WiFi...");
   while (WiFi.status() != WL_CONNECTED) {
     vTaskDelay(pdMS_TO_TICKS(200));
-    Serial.print(".");
+    // Serial.print(".");
   }
 
-  Serial.print(" Connecting to ThingsBoard...");
+  // Serial.print(" Connecting to ThingsBoard...");
   while (!tb.connected()) {
     if (tb.connect(THINGSBOARD_SERVER, DEVICE_TOKEN)) {
-      Serial.println(" Connected!");
+      // Serial.println(" Connected!");
     } else {
       vTaskDelay(pdMS_TO_TICKS(1000));
     }
@@ -83,7 +83,7 @@ void disconnectNetwork() {
   WiFi.disconnect(true, true);
   WiFi.mode(WIFI_OFF); // Physically cuts power to the RF synthesizer
   
-  Serial.println("Radio OFF. Resuming Light Sleep Architecture.");
+  // Serial.println("Radio OFF. Resuming Light Sleep Architecture.");
   
   critical_task_running = false; // Allow hardware sleep again
 }
@@ -224,9 +224,9 @@ void fftTask(void *pvParameters) {
         float f_found = (float)highest_freq_index * (current_fft_rate / (float)SAMPLES);
         fft_run_count++;
 
-        Serial.print(calibration_stage == 0 ? "I2S Sweep " : "Analog Sweep ");
-        Serial.print(fft_run_count); Serial.print("/"); Serial.print(MAX_FFT_RUNS);
-        Serial.print("\tPeak: "); Serial.print(f_found); Serial.println(" Hz");
+        // Serial.print(calibration_stage == 0 ? "I2S Sweep " : "Analog Sweep ");
+        // Serial.print(fft_run_count); // Serial.print("/"); // Serial.print(MAX_FFT_RUNS);
+        // Serial.print("\tPeak: "); // Serial.print(f_found); // Serial.println(" Hz");
 
         if (fft_run_count >= MAX_FFT_RUNS) {
           
@@ -246,10 +246,10 @@ void fftTask(void *pvParameters) {
 
           float f_max = (float)mode_index * (current_fft_rate / (float)SAMPLES);
           
-          Serial.println("\n====================================");
-          Serial.print("STAGE "); Serial.print(calibration_stage);
-          Serial.print(" FINISHED. F_MAX: ");
-          Serial.print(f_max); Serial.println(" Hz");
+          // Serial.println("\n====================================");
+          // Serial.print("STAGE "); // Serial.print(calibration_stage);
+          // Serial.print(" FINISHED. F_MAX: ");
+          // Serial.print(f_max); // Serial.println(" Hz");
 
           if (calibration_stage == 0) {
             float target_fft_rate = f_max * 2.1f;
@@ -282,8 +282,8 @@ void fftTask(void *pvParameters) {
               i2s_set_adc_mode(ADC_UNIT_1, ADC1_CHANNEL_6);
               hardware_rebuilding = false;
               
-              Serial.print("NEW HARDWARE SAMPLE RATE APPLIED: ");
-              Serial.print(current_sample_rate); Serial.println(" Hz");
+              // Serial.print("NEW HARDWARE SAMPLE RATE APPLIED: ");
+              // Serial.print(current_sample_rate); // Serial.println(" Hz");
               
               aggregate_samples_needed = current_sample_rate * AGGREGATE_WINDOW_SECONDS;
               calibration_done = true;
@@ -294,7 +294,7 @@ void fftTask(void *pvParameters) {
               vTaskDelete(NULL); 
               
             } else {
-              Serial.println(">>> Target < 4000Hz! Tearing down I2S and switching to precision AnalogRead...");
+              // Serial.println(">>> Target < 4000Hz! Tearing down I2S and switching to precision AnalogRead...");
               calibration_stage = 1;
               
               hardware_rebuilding = true;
@@ -322,9 +322,9 @@ void fftTask(void *pvParameters) {
             
             current_sample_rate = (uint32_t)(target_fft_rate); 
             
-            Serial.print("NEW ANALOG SOFTWARE RATE APPLIED: ");
-            Serial.print(current_sample_rate); Serial.println(" Hz");
-            Serial.println("====================================\n");
+            // Serial.print("NEW ANALOG SOFTWARE RATE APPLIED: ");
+            // Serial.print(current_sample_rate); // Serial.println(" Hz");
+            // Serial.println("====================================\n");
 
             aggregate_samples_needed = current_sample_rate * AGGREGATE_WINDOW_SECONDS;
             
@@ -388,13 +388,13 @@ void aggregateConsumerTask(void *pvParameters) {
       tb.sendTelemetryData("average_value", final_average);
       tb.loop();
 
-      Serial.print(">>> [THINGSBOARD PUBLISHED] average_value: ");
-      Serial.print(final_average);
-      Serial.print(" \t delta_time: ");
-      Serial.print(delta_time);
-      Serial.print(" ms");
-      Serial.print("\t sleep_count: ");
-      Serial.println(sleep_count);
+      // Serial.print(">>> [THINGSBOARD PUBLISHED] average_value: ");
+      // Serial.print(final_average);
+      // Serial.print(" \t delta_time: ");
+      // Serial.print(delta_time);
+      // Serial.print(" ms");
+      // Serial.print("\t sleep_count: ");
+      // Serial.println(sleep_count);
       
       sleep_count = 0;
       last_publish_time = millis(); 
@@ -413,13 +413,13 @@ void setup() {
   dsps_fft2r_init_fc32(NULL, 4096);
   dsps_wind_hann_f32(window_coefficients, SAMPLES);
 
-  // wifi_config_t conf;
-  // esp_wifi_get_config(WIFI_IF_STA, &conf);
-  // conf.sta.listen_interval = 3; 
-  // esp_wifi_set_config(WIFI_IF_STA, &conf);
+  wifi_config_t conf;
+  esp_wifi_get_config(WIFI_IF_STA, &conf);
+  conf.sta.listen_interval = 3; 
+  esp_wifi_set_config(WIFI_IF_STA, &conf);
 
-  // esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
-  // esp_sleep_enable_wifi_wakeup();
+  esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+  esp_sleep_enable_wifi_wakeup();
 
   i2s_config_t i2s_config = {
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_ADC_BUILT_IN),
