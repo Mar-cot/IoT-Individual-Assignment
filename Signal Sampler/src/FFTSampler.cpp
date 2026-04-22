@@ -346,7 +346,10 @@ void processingTask(void *pvParameters) {
   uint16_t rx_buffer[BUFFER_LEN];
   uint64_t total_sum = 0; 
   uint32_t samples_passed = 0;
-  
+  uint64_t _delta_time = 0;
+  uint64_t _start_time = esp_timer_get_time();
+  uint64_t _end_time = 0;
+
   for (;;) {
     if (!calibration_done) {
       vTaskDelay(pdMS_TO_TICKS(100)); 
@@ -358,13 +361,20 @@ void processingTask(void *pvParameters) {
         
         total_sum += (rx_buffer[i] & 0xFFF); 
         samples_passed++;
-
+        
         if (samples_passed >= aggregate_samples_needed) {
           float average = (float)total_sum / (float)samples_passed;
+          
+          _end_time = esp_timer_get_time();
+          
           xQueueSend(aggregateQueue, &average, portMAX_DELAY);
-
+          
+          _delta_time += _end_time - _start_time;
+          Serial.print("Window execution time: "); Serial.print(_delta_time); Serial.println("us");
+          _delta_time = 0;
           total_sum = 0;
           samples_passed = 0;
+          _start_time = esp_timer_get_time();
         }
       }
     }
@@ -373,33 +383,33 @@ void processingTask(void *pvParameters) {
 
 void aggregateConsumerTask(void *pvParameters) {
   float final_average;
-  unsigned long last_publish_time = millis(); 
+  uint64_t _start_time = 0, _end_time = 0, _delta_time = 0;
 
   // Make sure radio is completely off to start
   WiFi.mode(WIFI_OFF); 
 
   for (;;) {
     if (xQueueReceive(aggregateQueue, &final_average, portMAX_DELAY) == pdPASS) {
-      unsigned long current_time = millis();
-      unsigned long delta_time = current_time - last_publish_time;
+      _start_time = esp_timer_get_time();
 
       connectNetwork(); 
 
       tb.sendTelemetryData("average_value", final_average);
       tb.loop();
+      disconnectNetwork(); 
+      _end_time = esp_timer_get_time();
+      _delta_time += _end_time - _start_time;
 
       Serial.print(">>> [THINGSBOARD PUBLISHED] average_value: ");
       Serial.print(final_average);
       Serial.print(" \t delta_time: ");
-      Serial.print(delta_time);
-      Serial.print(" ms");
+      Serial.print(_delta_time);
       Serial.print("\t sleep_count: ");
       Serial.println(sleep_count);
       
-      sleep_count = 0;
-      last_publish_time = millis(); 
 
-      disconnectNetwork(); 
+      sleep_count = 0;
+      _delta_time = 0;
     }
   }
 }

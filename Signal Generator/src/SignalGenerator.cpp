@@ -5,7 +5,9 @@
 #define SAMPLE_RATE     100000 
 #define I2S_NUM         I2S_NUM_0
 #define WAVETABLE_SIZE  4096 
-#define BUFFER_SIZE     64   
+#define BUFFER_SIZE     64 
+
+// DAC-PIN 34
 
 // 1. Define the Struct to hold dedicated arrays
 struct Sinusoid {
