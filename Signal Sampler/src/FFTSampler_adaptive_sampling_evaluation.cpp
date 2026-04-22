@@ -108,7 +108,7 @@ void i2sReadTask(void *pvParameters) {
       // Reverted to Overwrite
       xQueueOverwrite(fftsampleQueue, buffer);
     } else {
-      xQueueSend(processingQueue, buffer, portMAX_DELAY);
+      // xQueueSend(processingQueue, buffer, portMAX_DELAY);
     }
   }
 }
@@ -159,7 +159,7 @@ void analogReadTask(void *pvParameters) {
         // Reverted to Overwrite
         xQueueOverwrite(fftsampleQueue, buffer);
       } else {
-        xQueueSend(processingQueue, buffer, portMAX_DELAY);
+        // xQueueSend(processingQueue, buffer, portMAX_DELAY);
       }
     }
   }
@@ -346,10 +346,7 @@ void processingTask(void *pvParameters) {
   uint16_t rx_buffer[BUFFER_LEN];
   uint64_t total_sum = 0; 
   uint32_t samples_passed = 0;
-  uint64_t _delta_time = 0;
-  uint64_t _start_time = esp_timer_get_time();
-  uint64_t _end_time = 0;
-
+  
   for (;;) {
     if (!calibration_done) {
       vTaskDelay(pdMS_TO_TICKS(100)); 
@@ -361,20 +358,13 @@ void processingTask(void *pvParameters) {
         
         total_sum += (rx_buffer[i] & 0xFFF); 
         samples_passed++;
-        
+
         if (samples_passed >= aggregate_samples_needed) {
           float average = (float)total_sum / (float)samples_passed;
-          
-          _end_time = esp_timer_get_time();
-          
           xQueueSend(aggregateQueue, &average, portMAX_DELAY);
-          
-          _delta_time += _end_time - _start_time;
-          Serial.print("Window execution time: "); Serial.print(_delta_time); Serial.println("us");
-          _delta_time = 0;
+
           total_sum = 0;
           samples_passed = 0;
-          _start_time = esp_timer_get_time();
         }
       }
     }
@@ -383,39 +373,33 @@ void processingTask(void *pvParameters) {
 
 void aggregateConsumerTask(void *pvParameters) {
   float final_average;
-  uint64_t _start_time = 0, _end_time = 0, _delta_time = 0, packet_rtt = 0;
-  uint16_t m_id;
+  unsigned long last_publish_time = millis(); 
 
   // Make sure radio is completely off to start
   WiFi.mode(WIFI_OFF); 
 
   for (;;) {
     if (xQueueReceive(aggregateQueue, &final_average, portMAX_DELAY) == pdPASS) {
-      _start_time = esp_timer_get_time();
+      unsigned long current_time = millis();
+      unsigned long delta_time = current_time - last_publish_time;
 
       connectNetwork(); 
-      packet_rtt = esp_timer_get_time();
-      m_id = tb.sendTelemetryData("average_value", final_average);
+
+      tb.sendTelemetryData("average_value", final_average);
       tb.loop();
-      packet_rtt = esp_timer_get_time() - packet_rtt;
-      disconnectNetwork(); 
-      _end_time = esp_timer_get_time();
-      _delta_time += _end_time - _start_time;
 
       Serial.print(">>> [THINGSBOARD PUBLISHED] average_value: ");
       Serial.print(final_average);
       Serial.print(" \t delta_time: ");
-      Serial.print(_delta_time);
-      Serial.print(" \t packet_id: ");
-      Serial.print(m_id);               // It is going to always be 1 since we disconnect and reconnect everytime.
-      Serial.print(" \t packet_rtt: ");
-      Serial.print(packet_rtt);
+      Serial.print(delta_time);
+      Serial.print(" ms");
       Serial.print("\t sleep_count: ");
       Serial.println(sleep_count);
       
-
       sleep_count = 0;
-      _delta_time = 0;
+      last_publish_time = millis(); 
+
+      disconnectNetwork(); 
     }
   }
 }
@@ -429,13 +413,6 @@ void setup() {
   dsps_fft2r_init_fc32(NULL, 4096);
   dsps_wind_hann_f32(window_coefficients, SAMPLES);
 
-  // wifi_config_t conf;
-  // esp_wifi_get_config(WIFI_IF_STA, &conf);
-  // conf.sta.listen_interval = 3; 
-  // esp_wifi_set_config(WIFI_IF_STA, &conf);
-
-  // esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
-  // esp_sleep_enable_wifi_wakeup();
 
   i2s_config_t i2s_config = {
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_ADC_BUILT_IN),
@@ -452,16 +429,15 @@ void setup() {
   i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL);
   i2s_set_pin(I2S_NUM_0, NULL);
   i2s_set_adc_mode(ADC_UNIT_1, ADC1_CHANNEL_6);
-
-  // REVERTED to size 1 
+ 
   fftsampleQueue = xQueueCreate(1, sizeof(uint16_t) * BUFFER_LEN);
   processingQueue = xQueueCreate(10, sizeof(uint16_t) * BUFFER_LEN);
   aggregateQueue = xQueueCreate(10, sizeof(float)); 
 
   xTaskCreatePinnedToCore(i2sReadTask, "I2S_Read", 4096, NULL, 2, &Task1Handle, 0);
   xTaskCreatePinnedToCore(fftTask, "FFT_Process", 8192, NULL, 3, &FFTTaskHandle, 1);
-  xTaskCreatePinnedToCore(processingTask, "Data_Processing", 4096, NULL, 3, &ProcessingTaskHandle, 1);
-  xTaskCreatePinnedToCore(aggregateConsumerTask, "TB_Consumer", 4096, NULL, 2, &ConsumerTaskHandle, 1);
+  // xTaskCreatePinnedToCore(processingTask, "Data_Processing", 4096, NULL, 3, &ProcessingTaskHandle, 1);
+  // xTaskCreatePinnedToCore(aggregateConsumerTask, "TB_Consumer", 4096, NULL, 2, &ConsumerTaskHandle, 1);
 }
 
 void loop() {

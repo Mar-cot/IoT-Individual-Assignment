@@ -3,8 +3,8 @@ import numpy as np
 # =========================
 # CONFIG
 # =========================
-file_off = "adaptive_off.txt"
-file_on = "adaptive_on.txt"
+file_off = "adaptive_off_pure_sampling.txt"
+file_on = "adaptive_on_pure_sampling_20Hz.txt"
 
 TAIL_SECONDS = 40.0  # usa solo gli ultimi 40 secondi
 

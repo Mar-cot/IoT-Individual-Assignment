@@ -2,8 +2,8 @@ import serial
 import time
 
 
-ser = serial.Serial('COM3', 921600)  
-filename = "adaptive_on_no_aggregation_50Hz_10s_window.txt"  
+ser = serial.Serial('COM4', 921600)  
+filename = "adaptive_on_pure_sampling_20Hz.txt"  
 
 start_time = time.time()
 
