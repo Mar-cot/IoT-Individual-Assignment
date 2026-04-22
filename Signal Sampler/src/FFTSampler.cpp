@@ -398,8 +398,8 @@ void aggregateConsumerTask(void *pvParameters) {
       m_id = tb.sendTelemetryData("average_value", final_average);
       tb.loop();
       packet_rtt = esp_timer_get_time() - packet_rtt;
-      disconnectNetwork(); 
       _end_time = esp_timer_get_time();
+      disconnectNetwork(); 
       _delta_time += _end_time - _start_time;
 
       Serial.print(">>> [THINGSBOARD PUBLISHED] average_value: ");
@@ -429,13 +429,6 @@ void setup() {
   dsps_fft2r_init_fc32(NULL, 4096);
   dsps_wind_hann_f32(window_coefficients, SAMPLES);
 
-  // wifi_config_t conf;
-  // esp_wifi_get_config(WIFI_IF_STA, &conf);
-  // conf.sta.listen_interval = 3; 
-  // esp_wifi_set_config(WIFI_IF_STA, &conf);
-
-  // esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
-  // esp_sleep_enable_wifi_wakeup();
 
   i2s_config_t i2s_config = {
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_ADC_BUILT_IN),

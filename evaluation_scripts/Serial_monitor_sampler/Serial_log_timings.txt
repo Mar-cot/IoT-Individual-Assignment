@@ -1,0 +1,100 @@
+.............. Connecting to ThingsBoard...ets Jul 29 2019 12:21:46
+
+rst:0x1 (POWERON_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+configsip: 0, SPIWP:0xee
+clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+mode:DIO, clock div:2
+load:0x3fff0030,len:1184
+load:0x40078000,len:13232
+load:0x40080400,len:3028
+entry 0x400805e4
+I2S Sweep 1/15	Peak: 97.66 Hz
+I2S Sweep 2/15	Peak: 97.66 Hz
+I2S Sweep 3/15	Peak: 97.66 Hz
+I2S Sweep 4/15	Peak: 97.66 Hz
+I2S Sweep 5/15	Peak: 97.66 Hz
+I2S Sweep 6/15	Peak: 97.66 Hz
+I2S Sweep 7/15	Peak: 97.66 Hz
+I2S Sweep 8/15	Peak: 97.66 Hz
+I2S Sweep 9/15	Peak: 97.66 Hz
+I2S Sweep 10/15	Peak: 97.66 Hz
+I2S Sweep 11/15	Peak: 97.66 Hz
+I2S Sweep 12/15	Peak: 97.66 Hz
+I2S Sweep 13/15	Peak: 97.66 Hz
+I2S Sweep 14/15	Peak: 97.66 Hz
+I2S Sweep 15/15	Peak: 97.66 Hz
+
+====================================
+STAGE 0 FINISHED. F_MAX: 97.66 Hz
+>>> Target < 4000Hz! Tearing down I2S and switching to precision AnalogRead...
+Analog Sweep 1/15	Peak: 97.66 Hz
+Analog Sweep 2/15	Peak: 97.66 Hz
+Analog Sweep 3/15	Peak: 97.66 Hz
+Analog Sweep 4/15	Peak: 97.66 Hz
+Analog Sweep 5/15	Peak: 97.66 Hz
+Analog Sweep 6/15	Peak: 97.66 Hz
+Analog Sweep 7/15	Peak: 97.66 Hz
+Analog Sweep 8/15	Peak: 97.66 Hz
+Analog Sweep 9/15	Peak: 97.66 Hz
+Analog Sweep 10/15	Peak: 97.66 Hz
+Analog Sweep 11/15	Peak: 97.66 Hz
+Analog Sweep 12/15	Peak: 97.66 Hz
+Analog Sweep 13/15	Peak: 97.66 Hz
+Analog Sweep 14/15	Peak: 97.66 Hz
+Analog Sweep 15/15	Peak: 97.66 Hz
+
+====================================
+STAGE 1 FINISHED. F_MAX: 97.66 Hz
+NEW ANALOG SOFTWARE RATE APPLIED: 205 Hz
+====================================
+
+Window execution time: 31164750us
+
+Radio ON. Connecting to WiFi................ Connecting to ThingsBoard... Connected!
+Radio OFF. Resuming Light Sleep Architecture.
+>>> [THINGSBOARD PUBLISHED] average_value: 1859.85 	 delta_time: 3132204 	 packet_id: 1 	 packet_rtt: 3468	 sleep_count: 1076
+Window execution time: 4995046us
+
+Radio ON. Connecting to WiFi................. Connecting to ThingsBoard... Connected!
+Radio OFF. Resuming Light Sleep Architecture.
+>>> [THINGSBOARD PUBLISHED] average_value: 1840.90 	 delta_time: 3230593 	 packet_id: 1 	 packet_rtt: 3758	 sleep_count: 384
+Window execution time: 4990226us
+
+Radio ON. Connecting to WiFi.................. Connecting to ThingsBoard... Connected!
+Radio OFF. Resuming Light Sleep Architecture.
+>>> [THINGSBOARD PUBLISHED] average_value: 1814.87 	 delta_time: 3375812 	 packet_id: 1 	 packet_rtt: 3956	 sleep_count: 358
+Window execution time: 4990249us
+
+Radio ON. Connecting to WiFi.................. Connecting to ThingsBoard... Connected!
+Radio OFF. Resuming Light Sleep Architecture.
+>>> [THINGSBOARD PUBLISHED] average_value: 1877.21 	 delta_time: 3435514 	 packet_id: 1 	 packet_rtt: 3804	 sleep_count: 334
+Window execution time: 4994947us
+
+Radio ON. Connecting to WiFi................. Connecting to ThingsBoard... Connected!
+Radio OFF. Resuming Light Sleep Architecture.
+>>> [THINGSBOARD PUBLISHED] average_value: 1938.66 	 delta_time: 3221136 	 packet_id: 1 	 packet_rtt: 3677	 sleep_count: 319
+Window execution time: 4990242us
+
+Radio ON. Connecting to WiFi................. Connecting to ThingsBoard... Connected!
+Radio OFF. Resuming Light Sleep Architecture.
+>>> [THINGSBOARD PUBLISHED] average_value: 1910.65 	 delta_time: 3198837 	 packet_id: 1 	 packet_rtt: 3443	 sleep_count: 370
+Window execution time: 4990253us
+
+Radio ON. Connecting to WiFi................. Connecting to ThingsBoard... Connected!
+Radio OFF. Resuming Light Sleep Architecture.
+>>> [THINGSBOARD PUBLISHED] average_value: 1873.13 	 delta_time: 3223274 	 packet_id: 1 	 packet_rtt: 3102	 sleep_count: 368
+Window execution time: 4990260us
+
+Radio ON. Connecting to WiFi.................. Connecting to ThingsBoard... Connected!
+Radio OFF. Resuming Light Sleep Architecture.
+>>> [THINGSBOARD PUBLISHED] average_value: 1817.54 	 delta_time: 3421545 	 packet_id: 1 	 packet_rtt: 3519	 sleep_count: 359
+Window execution time: 4990232us
+
+Radio ON. Connecting to WiFi................. Connecting to ThingsBoard... Connected!
+Radio OFF. Resuming Light Sleep Architecture.
+>>> [THINGSBOARD PUBLISHED] average_value: 1903.53 	 delta_time: 3319947 	 packet_id: 1 	 packet_rtt: 2870	 sleep_count: 323
+Window execution time: 4990239us
+
+Radio ON. Connecting to WiFi................. Connecting to ThingsBoard... Connected!
+Radio OFF. Resuming Light Sleep Architecture.
+>>> [THINGSBOARD PUBLISHED] average_value: 1867.92 	 delta_time: 3252695 	 packet_id: 1 	 packet_rtt: 3639	 sleep_count: 346
