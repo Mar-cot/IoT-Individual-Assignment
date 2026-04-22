@@ -18,7 +18,7 @@ struct Sinusoid {
 
 // 2. Create your mix (Max 6 signals because of DRAM limitations)
 Sinusoid active_signals[] = {
-  {1.0, 1000.0, 0.0, {}}, //0.06 I2S Sweep Limit (but Analog sweep still finds it); 0.05 Analog Sweep Limit 
+  {1.0, 1000.0, 0.0, {}},
   // {1.0, 5000.0, 0.0, {}},
   // {0.3, 9700.0, 0.0, {}},  
   {1.0, 200.0, 0.0, {}},

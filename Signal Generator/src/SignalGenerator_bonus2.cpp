@@ -3,7 +3,7 @@
 #include <Arduino.h>
 
 #define SAMPLE_RATE     100000 // 44.1 kHz (CD Quality)
-#define SINE_FREQ       30000.0 // Standard A4 note 
+#define SINE_FREQ       20.0
 #define I2S_NUM         I2S_NUM_0
 
 void setup() {

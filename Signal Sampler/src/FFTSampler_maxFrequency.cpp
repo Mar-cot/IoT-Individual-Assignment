@@ -20,7 +20,7 @@
 #define MAX_FFT_RUNS 15 
 #define AGGREGATE_WINDOW_SECONDS 5 
 
-uint32_t current_sample_rate = 100000; 
+uint32_t current_sample_rate = 625000; 
 float current_fft_rate = (float)current_sample_rate / DECIMATION_FACTOR;
 uint32_t aggregate_samples_needed;
 
@@ -255,7 +255,7 @@ void fftTask(void *pvParameters) {
             float target_fft_rate = f_max * 2.1f;
             
             if (target_fft_rate >= 4000.0f) {
-              if (target_fft_rate > 62500.0f) target_fft_rate = 62500.0f;
+              if (target_fft_rate > 15500.0f) target_fft_rate = 15500.0f;
               
               current_sample_rate = (uint32_t)(target_fft_rate * DECIMATION_FACTOR); 
 
