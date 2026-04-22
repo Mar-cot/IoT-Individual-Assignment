@@ -383,7 +383,7 @@ void processingTask(void *pvParameters) {
 
 void aggregateConsumerTask(void *pvParameters) {
   float final_average;
-  uint64_t _start_time = 0, _end_time = 0, _delta_time = 0;
+  uint64_t _start_time = 0, _end_time = 0, _delta_time = 0, packet_rtt = 0;
 
   // Make sure radio is completely off to start
   WiFi.mode(WIFI_OFF); 
@@ -393,9 +393,10 @@ void aggregateConsumerTask(void *pvParameters) {
       _start_time = esp_timer_get_time();
 
       connectNetwork(); 
-
+      packet_rtt = esp_timer_get_time();
       tb.sendTelemetryData("average_value", final_average);
       tb.loop();
+      packet_rtt = esp_timer_get_time() - packet_rtt;
       disconnectNetwork(); 
       _end_time = esp_timer_get_time();
       _delta_time += _end_time - _start_time;
@@ -404,6 +405,8 @@ void aggregateConsumerTask(void *pvParameters) {
       Serial.print(final_average);
       Serial.print(" \t delta_time: ");
       Serial.print(_delta_time);
+      Serial.print(" \t packet_rtt: ");
+      Serial.print(packet_rtt);
       Serial.print("\t sleep_count: ");
       Serial.println(sleep_count);
       
