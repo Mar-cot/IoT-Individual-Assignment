@@ -7,7 +7,6 @@
 #define WAVETABLE_SIZE  4096 
 #define BUFFER_SIZE     64 
 
-// DAC-PIN 26
 
 // 1. Define the Struct to hold dedicated arrays
 struct Sinusoid {
